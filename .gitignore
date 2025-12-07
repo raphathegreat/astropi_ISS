@@ -1,0 +1,32 @@
+# Exclude photo directories
+photos-1/
+photos-2/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (optional - uncomment if you want to exclude data too)
+# data/
+
+# Backup files
+*.bak
+*_backup.py
