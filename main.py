@@ -138,24 +138,6 @@ def calculate_matches_l2(des1, des2):
     return matches
 
 
-def apply_ransac(keypoints_1, keypoints_2, matches, ransac_threshold=5, min_matches=10):
-    """Filter matches via homography RANSAC; returns inlier matches."""
-    # RANSAC = kick out weird outliers; keep the good squad
-    if matches is None or len(matches) < min_matches:
-        return matches or [], None
-
-    src_pts = np.float32([keypoints_1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-    dst_pts = np.float32([keypoints_2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-
-    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, ransac_threshold)
-    if mask is None:
-        return matches, None
-
-    mask = mask.ravel().tolist()
-    inliers = [matches[i] for i in range(len(matches)) if mask[i] == 1]
-    return inliers, H
-
-
 def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s, gsd_cm_per_pixel, pair_name):
     """Compute speed for each inlier match; speed in km/s."""
     # Convert pixel jumps -> km/s using GSD and dt
@@ -275,20 +257,19 @@ def process_image_pair(
     except Exception:
         return [], 0
 
-    inliers, _H = apply_ransac(kp1, kp2, matches, ransac_threshold=RANSAC_THRESHOLD, min_matches=RANSAC_MIN_MATCHES)
-
-    if len(inliers) < MINIMUM_MATCHES_CONFIG.get("minimum_matches", 0):
-        return [], len(inliers)
+    # No RANSAC now; use matches directly
+    if len(matches) < MINIMUM_MATCHES_CONFIG.get("minimum_matches", 0):
+        return [], len(matches)
 
     data = calculate_match_speeds(
         kp1,
         kp2,
-        inliers,
+        matches,
         dt_s,
         GSD_CM_PER_PIXEL,
         pair_name,
     )
-    return data, len(inliers)
+    return data, len(matches)
 
 
 # -----------------------
