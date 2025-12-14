@@ -22,12 +22,15 @@ from statistics import mean
 # -----------------------
 # Mission timing settings
 # -----------------------
-MISSION_DURATION = 600          # seconds (total runtime from start to finish)
-SHUTDOWN_MARGIN = 20            # seconds reserved for filtering + writing files
-CAPTURE_DURATION = MISSION_DURATION - SHUTDOWN_MARGIN
+# Default (full run)
+DEFAULT_MISSION_DURATION = 600       # seconds (total runtime)
+DEFAULT_SHUTDOWN_MARGIN = 20         # seconds reserved for filtering + writing files
+DEFAULT_TIME_BETWEEN_IMAGES = 15     # seconds (600/15 ≈ 40 images incl first) — nice steady rhythm
 
-# Capture cadence (choose to keep <= 42 images at end)
-TIME_BETWEEN_IMAGES = 15        # seconds (600/15 ≈ 40 images incl first) — nice steady rhythm
+# Fast mode (quick test run)
+FAST_MISSION_DURATION = 60
+FAST_SHUTDOWN_MARGIN = 5
+FAST_TIME_BETWEEN_IMAGES = 5
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648        # cm per pixel
@@ -55,6 +58,24 @@ def get_time_from_exif(image_path: str):
         return datetime.strptime(time_str, "%Y:%m:%d %H:%M:%S")
     except Exception:
         return None
+
+
+def get_exif_dict(image_path: str):
+    """Grab all EXIF tags for one image as a dict of strings (kid-proof!)."""
+    try:
+        with open(image_path, "rb") as f:
+            img = Image(f)
+            tags = img.list_all()
+            exif_data = {}
+            for tag in tags:
+                try:
+                    val = img.get(tag)
+                    exif_data[tag] = str(val)
+                except Exception:
+                    exif_data[tag] = ""
+            return exif_data
+    except Exception:
+        return {}
 
 
 def get_time_difference_seconds(image_1: str, image_2: str, capture_epoch: dict, fallback_seconds: float):
@@ -207,6 +228,26 @@ def write_data_to_csv(match_data, path: Path):
             writer.writerow(row)
 
 
+def write_exif_to_csv(exif_map, path: Path):
+    """Write all EXIF goodies per image into one CSV (one row per image)."""
+    if not exif_map:
+        return
+    # Collect all possible keys across images
+    keys = set()
+    for _, exif in exif_map.items():
+        keys.update(exif.keys())
+    fieldnames = ["image_name"] + sorted(keys)
+
+    with open(path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for image_path, exif in exif_map.items():
+            row = {"image_name": Path(image_path).name}
+            for k in keys:
+                row[k] = exif.get(k, "")
+            writer.writerow(row)
+
+
 # -----------------------
 # Pair processing
 # -----------------------
@@ -254,19 +295,32 @@ def process_image_pair(
 # Main program
 # -----------------------
 def main():
+    import sys
+
     BASE_DIR = Path(__file__).parent
     result_path = BASE_DIR / "result.txt"
     data_path = BASE_DIR / "data.csv"
+    exif_path = BASE_DIR / "exif_data.csv"
+
+    # Pick timing settings (fast mode if user passes "fast")
+    use_fast = len(sys.argv) > 1 and sys.argv[1].lower() == "fast"
+    mission_duration = FAST_MISSION_DURATION if use_fast else DEFAULT_MISSION_DURATION
+    shutdown_margin = FAST_SHUTDOWN_MARGIN if use_fast else DEFAULT_SHUTDOWN_MARGIN
+    time_between_images = FAST_TIME_BETWEEN_IMAGES if use_fast else DEFAULT_TIME_BETWEEN_IMAGES
+    capture_duration = mission_duration - shutdown_margin
+    print(f"Mode: {'FAST' if use_fast else 'NORMAL'} | mission={mission_duration}s, gap={time_between_images}s, shutdown={shutdown_margin}s")
 
     mission_start = time.time()
-    mission_end = mission_start + MISSION_DURATION
-    capture_end = mission_start + CAPTURE_DURATION
+    mission_end = mission_start + mission_duration
+    capture_end = mission_start + capture_duration
 
     print("Initializing camera...")  # turn on the space cam!
     cam = Camera()
 
     # Track capture times for robust dt fallback (epoch seconds)
     capture_epoch = {}
+    # Stash EXIF per image so we can dump them later
+    exif_map = {}
 
     all_match_data = []
 
@@ -276,6 +330,7 @@ def main():
     print(f"Capturing image {image_number:03d} ...")
     cam.take_photo(image_1)
     capture_epoch[image_1] = time.time()
+    exif_map[image_1] = get_exif_dict(image_1)
 
     # Main capture+process loop (ends early to leave shutdown margin)
     while time.time() < capture_end:
@@ -283,7 +338,7 @@ def main():
         remaining_to_capture_end = capture_end - time.time()
         if remaining_to_capture_end <= 0:
             break
-        time.sleep(min(TIME_BETWEEN_IMAGES, remaining_to_capture_end))
+        time.sleep(min(time_between_images, remaining_to_capture_end))
 
         if time.time() >= capture_end:
             break
@@ -294,6 +349,7 @@ def main():
         print(f"Capturing image {image_number:03d} ...")
         cam.take_photo(image_2)
         capture_epoch[image_2] = time.time()
+        exif_map[image_2] = get_exif_dict(image_2)
 
         pair_name = f"image_{image_number-1:03d}_to_image_{image_number:03d}"
         print(f"Processing pair: {pair_name}")
@@ -303,7 +359,7 @@ def main():
             image_2_path=image_2,
             pair_name=pair_name,
             capture_epoch=capture_epoch,
-            fallback_dt_s=TIME_BETWEEN_IMAGES,
+            fallback_dt_s=time_between_images,
         )
 
         print(f"Inlier matches: {inlier_count} | Collected rows: {len(match_data)}")
@@ -313,7 +369,7 @@ def main():
         image_1 = image_2
 
         # If we’re dangerously close to the mission end, stop capturing/processing now
-        if (mission_end - time.time()) <= SHUTDOWN_MARGIN:
+        if (mission_end - time.time()) <= shutdown_margin:
             break
 
     # Graceful shutdown phase (guaranteed time window)
@@ -334,9 +390,11 @@ def main():
     # Write outputs
     write_result_to_file(final_speed, result_path)
     write_data_to_csv(filtered, data_path)
+    write_exif_to_csv(exif_map, exif_path)
 
     print(f"Final speed written to: {result_path.name}")
     print(f"Diagnostics written to: {data_path.name}")
+    print(f"EXIF dump written to: {exif_path.name}")
 
     # Ensure we exit within the 10-minute window
     now = time.time()
