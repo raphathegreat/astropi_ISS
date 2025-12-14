@@ -2,7 +2,7 @@
 # AstroDu (Christopher and Raphael) Here's what this script does:
 # 1) Take a bunch of pics with the Pi cam (about every 15s) for ~10 minutes.
 # 2) Read timestamps (EXIF first, otherwise our own) to know how long between pics.
-# 3) Find cool matching dots with SIFT + CLAHE + RANSAC to ditch bad matches.
+# 3) Find cool matching dots with ORB + CLAHE (no RANSAC now).
 # 4) Toss matches into one giant list, ignore pairs with too few matches.
 # 5) Drop the slowest 95% (keep the speedy top 5%), then average the speeds.
 # 6) Save the final speed in result.txt (5 sig figs) and all kept matches in data.csv.
@@ -34,7 +34,7 @@ DEFAULT_TIME_BETWEEN_IMAGES = 10      # seconds between shots
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648       # cm per pixel
-MAX_FEATURES = 1000
+MAX_FEATURES = 500             # ORB features (reduced to save memory)
 
 # Filters
 MINIMUM_MATCHES_CONFIG = {"enabled": True, "minimum_matches": 50}
@@ -103,7 +103,7 @@ def get_time_difference_seconds(image_1: str, image_2: str, capture_epoch: dict,
 
 
 # -----------------------
-# Vision helpers (SIFT + CLAHE)
+# Vision helpers (ORB + CLAHE)
 # -----------------------
 def convert_to_cv_gray(image_1: str, image_2: str):
     """Load images as grayscale with CLAHE. Returns (img1, img2) or (None, None) if load fails."""
@@ -118,19 +118,18 @@ def convert_to_cv_gray(image_1: str, image_2: str):
     return img1, img2
 
 
-def calculate_features_sift(img1_gray, img2_gray, max_features=1000):
-    """Detect SIFT features and descriptors."""
-    # SIFT time! Find up to 1000 shiny points per image
-    sift = cv2.SIFT_create(nfeatures=max_features)
-    kp1, des1 = sift.detectAndCompute(img1_gray, None)
-    kp2, des2 = sift.detectAndCompute(img2_gray, None)
+def calculate_features_orb(img1_gray, img2_gray, max_features=500):
+    """Detect ORB features and descriptors."""
+    orb = cv2.ORB_create(nfeatures=max_features)
+    kp1, des1 = orb.detectAndCompute(img1_gray, None)
+    kp2, des2 = orb.detectAndCompute(img2_gray, None)
     return kp1, kp2, des1, des2
 
 
-def calculate_matches_l2(des1, des2):
-    """Match SIFT descriptors using L2 distance."""
+def calculate_matches_hamming(des1, des2):
+    """Match ORB descriptors using Hamming distance."""
     # Brute-force match with crossCheck to keep only mutual BFFs
-    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(des1, des2)
     matches = sorted(matches, key=lambda m: m.distance)
     return matches
@@ -248,12 +247,12 @@ def process_image_pair(
     if img1 is None or img2 is None:
         return [], 0
 
-    kp1, kp2, des1, des2 = calculate_features_sift(img1, img2, max_features=MAX_FEATURES)
+    kp1, kp2, des1, des2 = calculate_features_orb(img1, img2, max_features=MAX_FEATURES)
     if des1 is None or des2 is None or kp1 is None or kp2 is None:
         return [], 0
 
     try:
-        matches = calculate_matches_l2(des1, des2)
+        matches = calculate_matches_hamming(des1, des2)
     except Exception:
         return [], 0
 
