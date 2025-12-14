@@ -1,5 +1,5 @@
 # main.py — Astro Pi ISS Speed Challenge (submission-safe timing + graceful shutdown)
-# Hi! I'm a 13-year-old coder. Here's what this script does:
+# AstroDu (Christopher and Raphael) Here's what this script does:
 # 1) Take a bunch of pics with the Pi cam (about every 15s) for ~10 minutes.
 # 2) Read timestamps (EXIF first, otherwise our own) to know how long between pics.
 # 3) Find cool matching dots with SIFT + CLAHE + RANSAC to ditch bad matches.
