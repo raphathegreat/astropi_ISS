@@ -28,9 +28,9 @@ from statistics import mean
 # Mission timing settings
 # -----------------------
 # Mission timing (single set)
-DEFAULT_MISSION_DURATION = 600       # seconds (total runtime)
+DEFAULT_MISSION_DURATION = 120       # seconds (total runtime)
 DEFAULT_SHUTDOWN_MARGIN = 20         # seconds reserved for filtering + writing files
-DEFAULT_TIME_BETWEEN_IMAGES = 15      # seconds between shots
+DEFAULT_TIME_BETWEEN_IMAGES = 10      # seconds between shots
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648       # cm per pixel
@@ -176,11 +176,11 @@ def apply_filters(all_match_data, minimum_matches_config, keep_top_fraction):
     if minimum_matches_config.get("enabled", False):
         pair_counts = {}
         for m in filtered:
-            pair_counts[m["pair_image_name"]] = pair_counts.get(m["pair_image_name"], 0) + 1
+            pair_counts[m["pair_index"]] = pair_counts.get(m["pair_index"], 0) + 1
 
         min_n = int(minimum_matches_config.get("minimum_matches", 0))
         valid_pairs = {p for p, c in pair_counts.items() if c >= min_n}
-        filtered = [m for m in filtered if m["pair_image_name"] in valid_pairs]
+        filtered = [m for m in filtered if m["pair_index"] in valid_pairs]
 
     # Filter 2: Percentile keep (drop bottom speeds, keep the speedsters)
     if filtered and keep_top_fraction > 0:
