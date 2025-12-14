@@ -9,7 +9,7 @@ import time
 import csv
 import numpy as np
 from picamzero import Camera
-from statistics import mean, stdev
+from statistics import mean
 
 
 # -----------------------
@@ -24,13 +24,13 @@ TIME_BETWEEN_IMAGES = 15        # seconds (600/15 ≈ 40 images incl first)
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648        # cm per pixel
-MAX_FEATURES = 1500
+MAX_FEATURES = 1000
 RANSAC_THRESHOLD = 8
 RANSAC_MIN_MATCHES = 20
 
 # Filters
 MINIMUM_MATCHES_CONFIG = {"enabled": True, "minimum_matches": 50}
-STANDARD_DEVIATION_CONFIG = {"enabled": True, "multiplier": 2}
+PERCENTILE_KEEP_FRACTION = 0.05  # keep top 5% speeds (drop bottom 95%)
 
 
 # -----------------------
@@ -76,28 +76,31 @@ def get_time_difference_seconds(image_1: str, image_2: str, capture_epoch: dict,
 
 
 # -----------------------
-# Vision helpers (ORB recommended over SIFT for portability)
+# Vision helpers (SIFT + CLAHE)
 # -----------------------
 def convert_to_cv_gray(image_1: str, image_2: str):
-    """Load images as grayscale. Returns (img1, img2) or (None, None) if load fails."""
+    """Load images as grayscale with CLAHE. Returns (img1, img2) or (None, None) if load fails."""
     img1 = cv2.imread(image_1, cv2.IMREAD_GRAYSCALE)
     img2 = cv2.imread(image_2, cv2.IMREAD_GRAYSCALE)
     if img1 is None or img2 is None:
         return None, None
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    img1 = clahe.apply(img1)
+    img2 = clahe.apply(img2)
     return img1, img2
 
 
-def calculate_features_orb(img1_gray, img2_gray, max_features=1000):
-    """Detect ORB features and descriptors."""
-    orb = cv2.ORB_create(nfeatures=max_features)
-    kp1, des1 = orb.detectAndCompute(img1_gray, None)
-    kp2, des2 = orb.detectAndCompute(img2_gray, None)
+def calculate_features_sift(img1_gray, img2_gray, max_features=1000):
+    """Detect SIFT features and descriptors."""
+    sift = cv2.SIFT_create(nfeatures=max_features)
+    kp1, des1 = sift.detectAndCompute(img1_gray, None)
+    kp2, des2 = sift.detectAndCompute(img2_gray, None)
     return kp1, kp2, des1, des2
 
 
-def calculate_matches_hamming(des1, des2):
-    """Match ORB descriptors using Hamming distance."""
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+def calculate_matches_l2(des1, des2):
+    """Match SIFT descriptors using L2 distance."""
+    bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
     matches = bf.match(des1, des2)
     matches = sorted(matches, key=lambda m: m.distance)
     return matches
@@ -152,7 +155,7 @@ def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s,
 # -----------------------
 # Filtering + output
 # -----------------------
-def apply_filters(all_match_data, minimum_matches_config, standard_deviation_config):
+def apply_filters(all_match_data, minimum_matches_config, keep_top_fraction):
     filtered = list(all_match_data)
 
     # Filter 1: Minimum matches per pair
@@ -165,15 +168,11 @@ def apply_filters(all_match_data, minimum_matches_config, standard_deviation_con
         valid_pairs = {p for p, c in pair_counts.items() if c >= min_n}
         filtered = [m for m in filtered if m["pair_image_name"] in valid_pairs]
 
-    # Filter 2: Remove outliers based on standard deviation
-    if standard_deviation_config.get("enabled", False) and len(filtered) > 1:
-        speeds = [m["speed"] for m in filtered]
-        mu = mean(speeds)
-        sigma = stdev(speeds)
-        k = float(standard_deviation_config.get("multiplier", 2))
-        thresh = k * sigma
-        if thresh > 0:
-            filtered = [m for m in filtered if abs(m["speed"] - mu) <= thresh]
+    # Filter 2: Percentile keep (drop bottom speeds)
+    if filtered and keep_top_fraction > 0:
+        filtered = sorted(filtered, key=lambda m: m["speed"])
+        keep_count = max(1, int(math.ceil(len(filtered) * keep_top_fraction)))
+        filtered = filtered[-keep_count:]
 
     return filtered
 
@@ -211,16 +210,19 @@ def process_image_pair(
     if img1 is None or img2 is None:
         return [], 0
 
-    kp1, kp2, des1, des2 = calculate_features_orb(img1, img2, max_features=MAX_FEATURES)
+    kp1, kp2, des1, des2 = calculate_features_sift(img1, img2, max_features=MAX_FEATURES)
     if des1 is None or des2 is None or kp1 is None or kp2 is None:
         return [], 0
 
     try:
-        matches = calculate_matches_hamming(des1, des2)
+        matches = calculate_matches_l2(des1, des2)
     except Exception:
         return [], 0
 
     inliers, _H = apply_ransac(kp1, kp2, matches, ransac_threshold=RANSAC_THRESHOLD, min_matches=RANSAC_MIN_MATCHES)
+
+    if len(inliers) < MINIMUM_MATCHES_CONFIG.get("minimum_matches", 0):
+        return [], len(inliers)
 
     data = calculate_match_speeds(
         kp1,
@@ -306,7 +308,7 @@ def main():
     print(f"Images saved: {image_number}")
     print(f"Rows before filtering: {len(all_match_data)}")
 
-    filtered = apply_filters(all_match_data, MINIMUM_MATCHES_CONFIG, STANDARD_DEVIATION_CONFIG)
+    filtered = apply_filters(all_match_data, MINIMUM_MATCHES_CONFIG, PERCENTILE_KEEP_FRACTION)
     print(f"Rows after filtering:  {len(filtered)}")
 
     if filtered:
