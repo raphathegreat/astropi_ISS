@@ -61,7 +61,7 @@ def get_time_from_exif(image_path: str):
 
 
 def get_exif_dict(image_path: str):
-    """Grab all EXIF tags for one image as a dict of strings (kid-proof!)."""
+    """Grab all EXIF tags for one image as a dict of strings (no fancy stuff)."""
     try:
         with open(image_path, "rb") as f:
             img = Image(f)
@@ -295,20 +295,17 @@ def process_image_pair(
 # Main program
 # -----------------------
 def main():
-    import sys
-
     BASE_DIR = Path(__file__).parent
     result_path = BASE_DIR / "result.txt"
     data_path = BASE_DIR / "data.csv"
     exif_path = BASE_DIR / "exif_data.csv"
 
-    # Pick timing settings (fast mode if user passes "fast")
-    use_fast = len(sys.argv) > 1 and sys.argv[1].lower() == "fast"
-    mission_duration = FAST_MISSION_DURATION if use_fast else DEFAULT_MISSION_DURATION
-    shutdown_margin = FAST_SHUTDOWN_MARGIN if use_fast else DEFAULT_SHUTDOWN_MARGIN
-    time_between_images = FAST_TIME_BETWEEN_IMAGES if use_fast else DEFAULT_TIME_BETWEEN_IMAGES
+    # Pick timing settings (single mode)
+    mission_duration = DEFAULT_MISSION_DURATION
+    shutdown_margin = DEFAULT_SHUTDOWN_MARGIN
+    time_between_images = DEFAULT_TIME_BETWEEN_IMAGES
     capture_duration = mission_duration - shutdown_margin
-    print(f"Mode: {'FAST' if use_fast else 'NORMAL'} | mission={mission_duration}s, gap={time_between_images}s, shutdown={shutdown_margin}s")
+    print(f"Mode: NORMAL | mission={mission_duration}s, gap={time_between_images}s, shutdown={shutdown_margin}s")
 
     mission_start = time.time()
     mission_end = mission_start + mission_duration
