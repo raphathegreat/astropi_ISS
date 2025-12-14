@@ -1,4 +1,11 @@
 # main.py — Astro Pi ISS Speed Challenge (submission-safe timing + graceful shutdown)
+# Hi! I'm a 13-year-old coder. Here's what this script does:
+# 1) Take a bunch of pics with the Pi cam (about every 15s) for ~10 minutes.
+# 2) Read timestamps (EXIF first, otherwise our own) to know how long between pics.
+# 3) Find cool matching dots with SIFT + CLAHE + RANSAC to ditch bad matches.
+# 4) Toss matches into one giant list, ignore pairs with too few matches.
+# 5) Drop the slowest 95% (keep the speedy top 5%), then average the speeds.
+# 6) Save the final speed in result.txt (5 sig figs) and all kept matches in data.csv.
 
 from exif import Image
 from datetime import datetime
@@ -20,7 +27,7 @@ SHUTDOWN_MARGIN = 20            # seconds reserved for filtering + writing files
 CAPTURE_DURATION = MISSION_DURATION - SHUTDOWN_MARGIN
 
 # Capture cadence (choose to keep <= 42 images at end)
-TIME_BETWEEN_IMAGES = 15        # seconds (600/15 ≈ 40 images incl first)
+TIME_BETWEEN_IMAGES = 15        # seconds (600/15 ≈ 40 images incl first) — nice steady rhythm
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648        # cm per pixel
@@ -38,13 +45,14 @@ PERCENTILE_KEEP_FRACTION = 0.05  # keep top 5% speeds (drop bottom 95%)
 # -----------------------
 def get_time_from_exif(image_path: str):
     """Return datetime from EXIF datetime_original, or None if missing/unreadable."""
+    # Try EXIF first; if it fails, caller will try other stuff
     try:
         with open(image_path, "rb") as f:
             img = Image(f)
-            time_str = img.get("datetime_original")
-            if not time_str:
-                return None
-            return datetime.strptime(time_str, "%Y:%m:%d %H:%M:%S")
+        time_str = img.get("datetime_original")
+        if not time_str:
+            return None
+        return datetime.strptime(time_str, "%Y:%m:%d %H:%M:%S")
     except Exception:
         return None
 
@@ -53,7 +61,7 @@ def get_time_difference_seconds(image_1: str, image_2: str, capture_epoch: dict,
     """
     Compute dt in seconds using EXIF when available.
     If EXIF missing, use recorded capture_epoch timestamps.
-    Never returns <= 0.
+    Never returns <= 0. (No divide-by-zero disasters!)
     """
     # 1) Prefer EXIF
     t1 = get_time_from_exif(image_1)
@@ -80,6 +88,7 @@ def get_time_difference_seconds(image_1: str, image_2: str, capture_epoch: dict,
 # -----------------------
 def convert_to_cv_gray(image_1: str, image_2: str):
     """Load images as grayscale with CLAHE. Returns (img1, img2) or (None, None) if load fails."""
+    # CLAHE makes dark space pics pop a bit so SIFT can find more dots
     img1 = cv2.imread(image_1, cv2.IMREAD_GRAYSCALE)
     img2 = cv2.imread(image_2, cv2.IMREAD_GRAYSCALE)
     if img1 is None or img2 is None:
@@ -92,6 +101,7 @@ def convert_to_cv_gray(image_1: str, image_2: str):
 
 def calculate_features_sift(img1_gray, img2_gray, max_features=1000):
     """Detect SIFT features and descriptors."""
+    # SIFT time! Find up to 1000 shiny points per image
     sift = cv2.SIFT_create(nfeatures=max_features)
     kp1, des1 = sift.detectAndCompute(img1_gray, None)
     kp2, des2 = sift.detectAndCompute(img2_gray, None)
@@ -100,6 +110,7 @@ def calculate_features_sift(img1_gray, img2_gray, max_features=1000):
 
 def calculate_matches_l2(des1, des2):
     """Match SIFT descriptors using L2 distance."""
+    # Brute-force match with crossCheck to keep only mutual BFFs
     bf = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
     matches = bf.match(des1, des2)
     matches = sorted(matches, key=lambda m: m.distance)
@@ -108,6 +119,7 @@ def calculate_matches_l2(des1, des2):
 
 def apply_ransac(keypoints_1, keypoints_2, matches, ransac_threshold=5, min_matches=10):
     """Filter matches via homography RANSAC; returns inlier matches."""
+    # RANSAC = kick out weird outliers; keep the good squad
     if matches is None or len(matches) < min_matches:
         return matches or [], None
 
@@ -125,6 +137,7 @@ def apply_ransac(keypoints_1, keypoints_2, matches, ransac_threshold=5, min_matc
 
 def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s, gsd_cm_per_pixel, pair_name):
     """Compute speed for each inlier match; speed in km/s."""
+    # Convert pixel jumps -> km/s using GSD and dt
     out = []
     if not matches:
         return out
@@ -158,7 +171,7 @@ def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s,
 def apply_filters(all_match_data, minimum_matches_config, keep_top_fraction):
     filtered = list(all_match_data)
 
-    # Filter 1: Minimum matches per pair
+    # Filter 1: Minimum matches per pair (skip weak pairs)
     if minimum_matches_config.get("enabled", False):
         pair_counts = {}
         for m in filtered:
@@ -168,7 +181,7 @@ def apply_filters(all_match_data, minimum_matches_config, keep_top_fraction):
         valid_pairs = {p for p, c in pair_counts.items() if c >= min_n}
         filtered = [m for m in filtered if m["pair_image_name"] in valid_pairs]
 
-    # Filter 2: Percentile keep (drop bottom speeds)
+    # Filter 2: Percentile keep (drop bottom speeds, keep the speedsters)
     if filtered and keep_top_fraction > 0:
         filtered = sorted(filtered, key=lambda m: m["speed"])
         keep_count = max(1, int(math.ceil(len(filtered) * keep_top_fraction)))
@@ -178,13 +191,14 @@ def apply_filters(all_match_data, minimum_matches_config, keep_top_fraction):
 
 
 def write_result_to_file(final_speed_km_s, path: Path):
-    """Write one number (<= 5 significant figures) to result.txt."""
+    """Write one number to result.txt (up to 5 significant figures, no trailing newline)."""
     with open(path, "w") as f:
-        f.write(f"{final_speed_km_s:.5g}\n")
+        f.write(f"{final_speed_km_s:.5g}")
 
 
 def write_data_to_csv(match_data, path: Path):
     """Optional: write diagnostics. Safe even if empty."""
+    # CSV gets every kept match so we can nerd out later
     fieldnames = ["speed", "pixel_distance", "time_difference", "gsd_used", "pair_image_name"]
     with open(path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -205,6 +219,7 @@ def process_image_pair(
 ):
     """Return (match_data_list, inlier_count). Never raises."""
     dt_s = get_time_difference_seconds(image_1_path, image_2_path, capture_epoch, fallback_dt_s)
+    # Load, feature, match, RANSAC, compute speeds — all in one go
 
     img1, img2 = convert_to_cv_gray(image_1_path, image_2_path)
     if img1 is None or img2 is None:
@@ -247,7 +262,7 @@ def main():
     mission_end = mission_start + MISSION_DURATION
     capture_end = mission_start + CAPTURE_DURATION
 
-    print("Initializing camera...")
+    print("Initializing camera...")  # turn on the space cam!
     cam = Camera()
 
     # Track capture times for robust dt fallback (epoch seconds)
@@ -294,7 +309,7 @@ def main():
         print(f"Inlier matches: {inlier_count} | Collected rows: {len(match_data)}")
         all_match_data.extend(match_data)
 
-        # Slide window
+        # Slide window (reuse last image)
         image_1 = image_2
 
         # If we’re dangerously close to the mission end, stop capturing/processing now
