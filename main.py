@@ -136,7 +136,7 @@ def calculate_matches_l2(des1, des2):
     return matches
 
 
-def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s, gsd_cm_per_pixel, pair_name):
+def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s, gsd_cm_per_pixel, pair_index):
     """Compute speed for each inlier match; speed in km/s."""
     # Convert pixel jumps -> km/s using GSD and dt
     out = []
@@ -159,7 +159,7 @@ def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s,
                 "pixel_distance": pixel_distance,
                 "time_difference": dt,
                 "gsd_used": gsd_cm_per_pixel,
-                "pair_image_name": pair_name,
+                "pair_index": pair_index,
             }
         )
 
@@ -200,13 +200,13 @@ def write_result_to_file(final_speed_km_s, path: Path):
 def write_data_to_csv(match_data, path: Path):
     """Optional: write diagnostics. Safe even if empty."""
     # CSV gets every kept match so we can nerd out later
-    fieldnames = ["speed", "pixel_distance", "time_difference", "pair_image_name"]
+    fieldnames = ["speed", "pixel_distance", "time_difference", "pair_index"]
     with open(path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for row in match_data:
             out = dict(row)
-            out.pop("gsd_used", None)  # drop constant GSD column
+            out.pop("gsd_used", None)  # drop constant GSD column (not used)
             writer.writerow(out)
 
 
@@ -236,7 +236,7 @@ def write_exif_to_csv(exif_map, path: Path):
 def process_image_pair(
     image_1_path: str,
     image_2_path: str,
-    pair_name: str,
+    pair_index: int,
     capture_epoch: dict,
     fallback_dt_s: float,
 ):
@@ -267,7 +267,7 @@ def process_image_pair(
         matches,
         dt_s,
         GSD_CM_PER_PIXEL,
-        pair_name,
+        pair_index,
     )
     return data, len(matches)
 
@@ -329,13 +329,13 @@ def main():
         capture_epoch[image_2] = time.time()
         exif_map[image_2] = get_exif_dict(image_2)
 
-        pair_name = f"image_{image_number-1:03d}_to_image_{image_number:03d}"
-        print(f"Processing pair: {pair_name}")
+        pair_index = image_number - 1
+        print(f"Processing pair #{pair_index:03d}")
 
         match_data, inlier_count = process_image_pair(
             image_1_path=image_1,
             image_2_path=image_2,
-            pair_name=pair_name,
+            pair_index=pair_index,
             capture_epoch=capture_epoch,
             fallback_dt_s=time_between_images,
         )
