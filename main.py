@@ -7,6 +7,11 @@
 # 5) Drop the slowest 95% (keep the speedy top 5%), then average the speeds.
 # 6) Save the final speed in result.txt (5 sig figs) and all kept matches in data.csv.
 
+import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_MAX_THREADS", "1")
+
 from exif import Image
 from datetime import datetime
 from pathlib import Path
