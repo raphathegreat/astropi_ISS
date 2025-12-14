@@ -27,15 +27,10 @@ from statistics import mean
 # -----------------------
 # Mission timing settings
 # -----------------------
-# Default (full run)
-DEFAULT_MISSION_DURATION = 600       # seconds (total runtime)
-DEFAULT_SHUTDOWN_MARGIN = 20         # seconds reserved for filtering + writing files
-DEFAULT_TIME_BETWEEN_IMAGES = 15     # seconds (600/15 ≈ 40 images incl first) — nice steady rhythm
-
-# Fast mode (quick test run)
-FAST_MISSION_DURATION = 60
-FAST_SHUTDOWN_MARGIN = 5
-FAST_TIME_BETWEEN_IMAGES = 5
+# Mission timing (single set)
+DEFAULT_MISSION_DURATION = 120       # seconds (total runtime)
+DEFAULT_SHUTDOWN_MARGIN = 10         # seconds reserved for filtering + writing files
+DEFAULT_TIME_BETWEEN_IMAGES = 5      # seconds between shots
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648        # cm per pixel
