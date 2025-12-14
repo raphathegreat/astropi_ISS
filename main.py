@@ -200,12 +200,14 @@ def write_result_to_file(final_speed_km_s, path: Path):
 def write_data_to_csv(match_data, path: Path):
     """Optional: write diagnostics. Safe even if empty."""
     # CSV gets every kept match so we can nerd out later
-    fieldnames = ["speed", "pixel_distance", "time_difference", "gsd_used", "pair_image_name"]
+    fieldnames = ["speed", "pixel_distance", "time_difference", "pair_image_name"]
     with open(path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for row in match_data:
-            writer.writerow(row)
+            out = dict(row)
+            out.pop("gsd_used", None)  # drop constant GSD column
+            writer.writerow(out)
 
 
 def write_exif_to_csv(exif_map, path: Path):
