@@ -2,7 +2,7 @@
 # AstroDu (Christopher and Raphael) Here's what this script does:
 # 1) Take a bunch of pics with the Pi cam (about every 15s) for ~10 minutes.
 # 2) Read timestamps (EXIF first, otherwise our own) to know how long between pics.
-# 3) Find cool matching dots with ORB + CLAHE (no RANSAC now).
+# 3) Find cool matching dots with ORB + CLAHE and FLANN (no RANSAC now).
 # 4) Toss matches into one giant list, ignore pairs with too few matches.
 # 5) Drop the slowest 95% (keep the speedy top 5%), then average the speeds.
 # 6) Save the final speed in result.txt (5 sig figs) and all kept matches in data.csv.
@@ -28,13 +28,13 @@ from statistics import mean
 # Mission timing settings
 # -----------------------
 # Mission timing (single set)
-DEFAULT_MISSION_DURATION = 120       # seconds (total runtime)
+DEFAULT_MISSION_DURATION = 600       # seconds (total runtime)
 DEFAULT_SHUTDOWN_MARGIN = 20         # seconds reserved for filtering + writing files
-DEFAULT_TIME_BETWEEN_IMAGES = 10      # seconds between shots
+DEFAULT_TIME_BETWEEN_IMAGES = 15      # seconds between shots
 
 # Processing / model settings
 GSD_CM_PER_PIXEL = 12648       # cm per pixel
-MAX_FEATURES = 500             # ORB features (reduced to save memory)
+MAX_FEATURES = 1000             # ORB features (reduced to save memory)
 
 # Filters
 MINIMUM_MATCHES_CONFIG = {"enabled": True, "minimum_matches": 50}
@@ -126,13 +126,20 @@ def calculate_features_orb(img1_gray, img2_gray, max_features=500):
     return kp1, kp2, des1, des2
 
 
-def calculate_matches_hamming(des1, des2):
-    """Match ORB descriptors using Hamming distance."""
-    # Brute-force match with crossCheck to keep only mutual BFFs
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(des1, des2)
-    matches = sorted(matches, key=lambda m: m.distance)
-    return matches
+def calculate_matches_flann(des1, des2, ratio_thresh=0.75):
+    """Match ORB descriptors using FLANN (LSH) with a ratio test."""
+    index_params = dict(algorithm=6,  # FLANN_INDEX_LSH
+                        table_number=12,
+                        key_size=20,
+                        multi_probe_level=2)
+    search_params = dict(checks=50)
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+    knn = flann.knnMatch(des1, des2, k=2)
+    good = []
+    for m, n in knn:
+        if m.distance < ratio_thresh * n.distance:
+            good.append(m)
+    return sorted(good, key=lambda m: m.distance)
 
 
 def calculate_match_speeds(keypoints_1, keypoints_2, matches, time_difference_s, gsd_cm_per_pixel, pair_index):
@@ -252,7 +259,7 @@ def process_image_pair(
         return [], 0
 
     try:
-        matches = calculate_matches_hamming(des1, des2)
+        matches = calculate_matches_flann(des1, des2)
     except Exception:
         return [], 0
 
